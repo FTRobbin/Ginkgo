@@ -1,2 +1,2 @@
 build:
-	g++ node.cpp sha256.cpp -o node
+	g++ src/node.cpp src/sha256.cpp -o node
