@@ -1,3 +1,4 @@
+#include<cassert>
 #include<map>
 #include<queue>
 #include<string>
@@ -7,56 +8,99 @@
 #include<iostream>
 #include<algorithm>
 
+#include<unistd.h>
+#include<sys/socket.h>
+#include<netinet/in.h>
+#include<arpa/inet.h>
+
+#include"sha256.h"
+
 using namespace std;
 
 const char* MY_NETID = "hn332";
 
 typedef string byte_array;
 
-typedef byte_array SHA256;
+typedef byte_array SHA256b;
 
 byte_array int_to_byte_array(unsigned i) {
-	// 0 --> "0"
 	byte_array ret = "";
-	//TODO : what's the specification
+	if (i == 0) {
+		ret = "0";
+	} else {
+		while (i) {
+			ret += (unsigned char)('0' + (i % 10));
+			i /= 10;
+		}
+		reverse(ret.begin(), ret.end());
+	}
 	return ret;
 }
 
 byte_array int_to_byte_array32(unsigned i) {
-	byte_array ret32 = "00000000000000000000000000000000";
-	//TODO : what's the specification
+	byte_array ret32 = "";
+	for (int j = 0; j < 32; ++j) {
+		if (j + 4 < 32) {
+			ret32 += '\0';
+		} else {
+			ret32 += (unsigned char)(i >> (8 * (32 - 1 - j)) * ((1 << 8) - 1));
+		}
+	}
 	return ret32;
 }
 
 byte_array string_to_byte_array(string s) {
-	//TODO
 	return s;
 }
 
 unsigned byte_array_to_int(byte_array ba) {
-	//TODO : oh
-	return 0;
+	unsigned ret = 0;
+	for (int i = 0; i < ba.length(); ++i) {
+		ret = (ret << 8) | ba[i];
+	}
+	return ret;
 }
 
-SHA256 sha256(byte_array x) {
-	// sha256 ("0") = 5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9
-	//TODO : real sha256
-	return x;
-}
-
-int port = 9000, numtxinblock = 2, difficulty = 1;
+int port = 9000, numtxinblock = 2, difficulty = 1, numcores = 1;
 
 vector<int> peers;
 
 void process_arguments(int argn, char *args[]) {
-	//TODO : parse the arguments
+	for (int i = 1; i < argn; ++i) {
+		char *s = args[i];
+		if (strcmp(s, "--port") == 0) {
+			++i;
+			sscanf(args[i], "%d", &port);
+		} else if (strcmp(s, "--peers") == 0) {
+			++i;	
+			int l = strlen(args[i]);
+			for (int j = 0, tmp = 0; j <= l; ++j) {
+				if ('0' <= args[i][j] && args[i][j] <= '9') {
+					tmp = tmp * 10 + (args[i][j] - '0');
+				} else {
+					peers.push_back(tmp);
+				}
+			}
+		} else if (strcmp(s, "--numtxinblock") == 0) {
+			++i;
+			sscanf(args[i], "%d", &numtxinblock);
+		} else if (strcmp(s, "--difficulty") == 0) {
+			++i;
+			sscanf(args[i], "%d", &difficulty);
+		} else if (strcmp(s, "--numcores") == 0) {
+			++i;
+			sscanf(args[i], "%d", &numcores);
+		} else {
+			assert(false);
+		}
+	}
 }
 
-map<SHA256, int> UTXO; //int suffices
+map<SHA256b, int> UTXO; //does int suffice
 
 void init_UTXO() {
 	for (int i = 0; i < 100; ++i) {
-		SHA256 account = sha256(int_to_byte_array(i));
+		SHA256b account = sha256(int_to_byte_array(i));
 		UTXO[account] = 100000;	
 	}
 }
@@ -138,26 +182,112 @@ struct block {
 
 vector<block> chain;
 
+vector<int> peer_conns;
+
+int last_connection = -1;
+
+int get_size_type(int t) {
+	switch (t) {
+		case TRANSACTION: {
+							  return 1 + 32 * 4;
+						  }
+		case CLOSE: {
+						return 1;
+					}
+		case BLOCK: {
+						return 1 + 32 * 5 + 128 * numtxinblock;
+					}
+		case GET_BLOCK: {
+							return 1 + 32;
+						}
+		default : {
+					  return 0;
+				  }
+	}
+}
+
+void init_network() {
+	//connect to all peers
+	for (int i = 0; i < (int)peers.size(); ++i) {	
+		int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		//printf("sockfd = %d\n", sockfd);
+		if (sockfd == -1) {
+			perror("socket failed");
+			exit(-1);
+		}
+		struct sockaddr_in addr;
+		int addr_size = sizeof(sockaddr_in);
+		addr.sin_family = AF_INET;
+		addr.sin_port = htons(peers[i]);
+		if (inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) <= 0) {
+			perror("inet_pton failed");
+			exit(-1);
+		}
+		if (connect(sockfd, (sockaddr *) &addr, addr_size) == -1) {
+			perror("connect failed");
+			exit(-1);
+		}
+		peer_conns.push_back(sockfd);
+	}
+}
+
 message get_message() {
-	//TODO: real input from network
-	byte_array data;
-	cin >> data;
+	if (last_connection == -1) {
+		//listen to server		
+		int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		//printf("sockfd = %d\n", sockfd);
+		if (sockfd == -1) {
+			perror("socket failed");
+			exit(-1);
+		}
+		struct sockaddr_in addr;
+		int addr_size = sizeof(sockaddr_in);
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = htonl(INADDR_ANY);
+		addr.sin_port = htons(port);
+		bind(sockfd, (sockaddr *) &addr, addr_size);
+		{
+			//perror("bind failed");
+			//exit(-1);
+		}
+		if (listen(sockfd, 1) == -1) {
+			perror("listen failed");
+			exit(-1);
+		}
+		last_connection = accept(sockfd, (sockaddr *) &addr, (socklen_t *) &addr_size);
+		if (last_connection < 0) {
+			perror("accpet failed");
+			exit(-1);
+		}
+	}
+	char type[1], *buf;
+	read(last_connection, type, 1);
+	int bsize = get_size_type(type[0]);
+	byte_array data = "";
+	if (bsize > 1) {
+		buf = new char (bsize - 1);
+		read(last_connection, buf, sizeof(buf));
+		data = string(type) + string(buf);
+	} else {
+		data = string(type);
+	}
 	return message(data);
 }
 
-void forward(message m) {
-	//TODO: real output to network
-	cout << m.data << endl;
+void broadcast(message m) {
+	for (int i = 0; i < (int)peer_conns.size(); ++i) {
+		send(peer_conns[i], m.data.c_str(), m.data.size(), 0);
+	}
 }
 
-void broadcast(message m) {
-	//TODO: real output to network
-	cout << m.data << endl;
+void reply(message m) {
+	send(last_connection, m.data.c_str(), m.data.size(), 0);
 }
 
 int main(int argn, char *args[]) {
 	process_arguments(argn, args);
 	init_UTXO();
+	init_network();
 	//main loop
 	bool closed = false;
 	while (!closed) {
@@ -165,33 +295,32 @@ int main(int argn, char *args[]) {
 			message m = get_message();
 			switch (m.get_type()) {
 				case TRANSACTION: {
-					TX tx = TX(m.get_tx());
-					if (UTXO[tx.sender] >= tx.get_amount()) {
-						UTXO[tx.sender] -= tx.get_amount();
-						UTXO[tx.receiver] += tx.get_amount();
-						q.push(tx);
-						forward(m);
-					}
-					break;
-				}
+									  TX tx = TX(m.get_tx());
+									  if (UTXO[tx.sender] >= tx.get_amount()) {
+										  UTXO[tx.sender] -= tx.get_amount();
+										  UTXO[tx.receiver] += tx.get_amount();
+										  q.push(tx);
+										  broadcast(m);
+									  }
+									  break;
+								  }
 				case CLOSE: {
-					closed = true;
-					forward(m);
-					break;
-				}
+								closed = true;
+								broadcast(m);
+								break;
+							}
 				case BLOCK: {
-					//Do nothing
-					break;
-				}
+								//Do nothing
+								break;
+							}
 				case GET_BLOCK: {
-					unsigned h = byte_array_to_int(m.get_block_height());
-					if (h < chain.size()) {
-						message mb = chain[h].get_message();
-						//TODO: return to the sender
-						broadcast(mb);
-					}
-					break;
-				}
+									unsigned h = byte_array_to_int(m.get_block_height());
+									if (h < chain.size()) {
+										message mb = chain[h].get_message();
+										reply(mb);
+									}
+									break;
+								}
 			}
 		}
 		if (q.size() == numtxinblock) {
