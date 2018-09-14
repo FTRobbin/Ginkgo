@@ -23,6 +23,27 @@ typedef string byte_array;
 
 typedef byte_array SHA256b;
 
+bool verbose = false;
+
+void debug_bytes(byte_array ba) {
+	printf("[");
+	for (int i = 0; i < (int)ba.size(); ++i) {
+		printf("%u%c", (unsigned)((unsigned char)ba[i]), i == (int)ba.size() - 1 ? ']' : ' ');
+	}
+	printf("\n");
+}
+
+void debug_bytes_hex(byte_array ba) {
+	printf("[");
+	for (int i = 0; i < (int)ba.size(); ++i) {
+		for (int j = 0; j < 2; ++j) {
+			int d = (unsigned char)ba[i] >> (4 * (1 - j)) & 15;
+			printf("%c", d < 10 ? '0' + d : 'a' + (d - 10));
+		}
+	}
+	printf("]\n");
+}
+
 byte_array int_to_byte_array(unsigned i) {
 	byte_array ret = "";
 	if (i == 0) {
@@ -38,13 +59,9 @@ byte_array int_to_byte_array(unsigned i) {
 }
 
 byte_array int_to_byte_array32(unsigned i) {
-	byte_array ret32 = "";
-	for (int j = 0; j < 32; ++j) {
-		if (j + 4 < 32) {
-			ret32 += '\0';
-		} else {
-			ret32 += (unsigned char)(i >> (8 * (32 - 1 - j)) * ((1 << 8) - 1));
-		}
+	byte_array ret32 = int_to_byte_array(i);
+	while (ret32.size() < 32) {
+		ret32 = string("0") + ret32;
 	}
 	return ret32;
 }
@@ -56,12 +73,12 @@ byte_array string_to_byte_array(string s) {
 unsigned byte_array_to_int(byte_array ba) {
 	unsigned ret = 0;
 	for (int i = 0; i < ba.length(); ++i) {
-		ret = (ret << 8) | ba[i];
+		ret = ret * 10 + (ba[i] - '0');
 	}
 	return ret;
 }
 
-int port = 9000, numtxinblock = 2, difficulty = 1, numcores = 1;
+int port = 9000, numtxinblock = 50000, difficulty = 1, numcores = 1;
 
 vector<int> peers;
 
@@ -79,6 +96,7 @@ void process_arguments(int argn, char *args[]) {
 					tmp = tmp * 10 + (args[i][j] - '0');
 				} else {
 					peers.push_back(tmp);
+					tmp = 0;
 				}
 			}
 		} else if (strcmp(s, "--numtxinblock") == 0) {
@@ -90,6 +108,8 @@ void process_arguments(int argn, char *args[]) {
 		} else if (strcmp(s, "--numcores") == 0) {
 			++i;
 			sscanf(args[i], "%d", &numcores);
+		} else if (strcmp(s, "--verbose") == 0) {
+			verbose = true;
 		} else {
 			assert(false);
 		}
@@ -101,6 +121,7 @@ map<SHA256b, int> UTXO; //does int suffice
 void init_UTXO() {
 	for (int i = 0; i < 100; ++i) {
 		SHA256b account = sha256(int_to_byte_array(i));
+		//debug_bytes_hex(account);
 		UTXO[account] = 100000;	
 	}
 }
@@ -113,7 +134,7 @@ struct message {
 	message(byte_array data) : data(data) {}
 
 	unsigned get_type() {
-		return data[0];
+		return data[0] - '0';
 	}
 
 	byte_array get_tx() {
@@ -146,12 +167,32 @@ struct TX {
 
 queue<TX> q;
 
+int get_size_type(int t) {
+	switch (t - '0') {
+		case TRANSACTION: {
+							  return 1 + 32 * 4;
+						  }
+		case CLOSE: {
+						return 1;
+					}
+		case BLOCK: {
+						return 1 + 32 * 5 + 128 * numtxinblock;
+					}
+		case GET_BLOCK: {
+							return 1 + 32;
+						}
+		default : {
+					  exit(-1);
+				  }
+	}
+}
+
 struct block {
 	byte_array nonce, prior_hash, hash, block_height, miner_address;
 	vector<TX> block_data;
 
 	message get_message() {
-		byte_array data = "\0";
+		byte_array data = "2";
 		data += nonce + prior_hash + hash + block_height + miner_address;
 		for (int i = 0; i < (int)block_data.size(); ++i) {
 			data += block_data[i].get_raw();
@@ -185,26 +226,6 @@ vector<block> chain;
 vector<int> peer_conns;
 
 int last_connection = -1;
-
-int get_size_type(int t) {
-	switch (t) {
-		case TRANSACTION: {
-							  return 1 + 32 * 4;
-						  }
-		case CLOSE: {
-						return 1;
-					}
-		case BLOCK: {
-						return 1 + 32 * 5 + 128 * numtxinblock;
-					}
-		case GET_BLOCK: {
-							return 1 + 32;
-						}
-		default : {
-					  return 0;
-				  }
-	}
-}
 
 void init_network() {
 	//connect to all peers
@@ -260,14 +281,18 @@ message get_message() {
 			exit(-1);
 		}
 	}
-	char type[1], *buf;
+	char type[2], *buf;
 	read(last_connection, type, 1);
 	int bsize = get_size_type(type[0]);
 	byte_array data = "";
 	if (bsize > 1) {
-		buf = new char (bsize - 1);
-		read(last_connection, buf, sizeof(buf));
-		data = string(type) + string(buf);
+		buf = new char[bsize];
+		int pos = 0;
+		while (pos < bsize - 1) {
+			int delta = read(last_connection, buf + pos, bsize - 1 - pos);
+			pos += delta;
+		}
+		data = string(type) + string(buf, bsize - 1);
 	} else {
 		data = string(type);
 	}
@@ -276,6 +301,7 @@ message get_message() {
 
 void broadcast(message m) {
 	for (int i = 0; i < (int)peer_conns.size(); ++i) {
+		//debug_bytes(m.data);
 		send(peer_conns[i], m.data.c_str(), m.data.size(), 0);
 	}
 }
@@ -293,6 +319,9 @@ int main(int argn, char *args[]) {
 	while (!closed) {
 		while (!closed && q.size() < numtxinblock) {
 			message m = get_message();
+			if (verbose) {
+				debug_bytes(m.data);
+			}
 			switch (m.get_type()) {
 				case TRANSACTION: {
 									  TX tx = TX(m.get_tx());
@@ -301,6 +330,9 @@ int main(int argn, char *args[]) {
 										  UTXO[tx.receiver] += tx.get_amount();
 										  q.push(tx);
 										  broadcast(m);
+									  } else {
+										  printf("Invalid transaction!\n");
+										  //debug_bytes_hex(tx.sender);
 									  }
 									  break;
 								  }
@@ -321,6 +353,9 @@ int main(int argn, char *args[]) {
 									}
 									break;
 								}
+				default: {
+					exit(-1);
+				}
 			}
 		}
 		if (q.size() == numtxinblock) {

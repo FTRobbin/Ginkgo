@@ -128,5 +128,5 @@ std::string sha256(std::string input)
     buf[SHA256::DIGEST_SIZE] = 0;
     for (int i = 0; i < SHA256::DIGEST_SIZE; i++)
 		buf[i] = digest[i];
-    return std::string(buf);
+    return std::string(buf, SHA256::DIGEST_SIZE);
 }
