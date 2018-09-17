@@ -1,4 +1,5 @@
 #include<cassert>
+#include<set>
 #include<map>
 #include<queue>
 #include<string>
@@ -160,12 +161,32 @@ struct TX {
 		return byte_array_to_int(amount);
 	}
 
-	byte_array get_raw() {
+	byte_array get_raw() const {
 		return sender + receiver + amount + timestamp;
+	}
+
+	bool amount_overflow() const {
+		for (int i = 0; i < 32 - 9; ++i) {
+			if (amount[i] != '0') {
+				return true;
+			}
+		}
+		for (int i = 32 - 9; i < 32; ++i) {
+			if (amount[i] < '0' || amount[i] > '9') {
+				return true;
+			}
+		}
+		return false;
 	}
 };
 
 queue<TX> q;
+
+set<TX> tx_history;
+
+bool operator < (const TX &a, const TX &b) {
+	return a.get_raw() < b.get_raw();
+}
 
 int get_size_type(int t) {
 	switch (t - '0') {
@@ -253,16 +274,19 @@ void init_network() {
 }
 
 message get_message() {
+	static int sockfd;
+	static sockaddr_in addr;
+	static int addr_size;
 	if (last_connection == -1) {
 		//listen to server		
-		int sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 		//printf("sockfd = %d\n", sockfd);
 		if (sockfd == -1) {
 			perror("socket failed");
 			exit(-1);
 		}
-		struct sockaddr_in addr;
-		int addr_size = sizeof(sockaddr_in);
+		sockaddr_in addr;
+		addr_size = sizeof(sockaddr_in);
 		addr.sin_family = AF_INET;
 		addr.sin_addr.s_addr = htonl(INADDR_ANY);
 		addr.sin_port = htons(port);
@@ -271,18 +295,19 @@ message get_message() {
 			//perror("bind failed");
 			//exit(-1);
 		}
-		if (listen(sockfd, 1) == -1) {
+		if (listen(sockfd, 100) == -1) {
 			perror("listen failed");
 			exit(-1);
 		}
+	}
+	char type[2], *buf;
+	while (last_connection == -1 || read(last_connection, type, 1) == 0) {
 		last_connection = accept(sockfd, (sockaddr *) &addr, (socklen_t *) &addr_size);
 		if (last_connection < 0) {
 			perror("accpet failed");
 			exit(-1);
 		}
 	}
-	char type[2], *buf;
-	read(last_connection, type, 1);
 	int bsize = get_size_type(type[0]);
 	byte_array data = "";
 	if (bsize > 1) {
@@ -325,14 +350,14 @@ int main(int argn, char *args[]) {
 			switch (m.get_type()) {
 				case TRANSACTION: {
 									  TX tx = TX(m.get_tx());
-									  if (UTXO[tx.sender] >= tx.get_amount()) {
+									  if (UTXO.count(tx.sender) && UTXO.count(tx.receiver)
+										  && !tx.amount_overflow() && UTXO[tx.sender] >= tx.get_amount() 
+										  && !tx_history.count(tx)) {
 										  UTXO[tx.sender] -= tx.get_amount();
 										  UTXO[tx.receiver] += tx.get_amount();
 										  q.push(tx);
+										  tx_history.insert(tx);
 										  broadcast(m);
-									  } else {
-										  printf("Invalid transaction!\n");
-										  //debug_bytes_hex(tx.sender);
 									  }
 									  break;
 								  }
@@ -342,7 +367,7 @@ int main(int argn, char *args[]) {
 								break;
 							}
 				case BLOCK: {
-								//Do nothing
+								broadcast(m);
 								break;
 							}
 				case GET_BLOCK: {
