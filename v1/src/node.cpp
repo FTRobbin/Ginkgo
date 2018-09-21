@@ -71,6 +71,20 @@ byte_array string_to_byte_array(string s) {
 	return s;
 }
 
+bool overflow(byte_array ba, int length) {
+	for (int i = 0; i < 32 - length; ++i) {
+		if (ba[i] != '0') {
+			return true;
+		}
+	}
+	for (int i = 32 - length; i < 32; ++i) {
+		if (ba[i] < '0' || ba[i] > '9') {
+			return true;
+		}
+	}
+	return false;
+}
+
 unsigned byte_array_to_int(byte_array ba) {
 	unsigned ret = 0;
 	for (int i = 0; i < ba.length(); ++i) {
@@ -166,17 +180,7 @@ struct TX {
 	}
 
 	bool amount_overflow() const {
-		for (int i = 0; i < 32 - 9; ++i) {
-			if (amount[i] != '0') {
-				return true;
-			}
-		}
-		for (int i = 32 - 9; i < 32; ++i) {
-			if (amount[i] < '0' || amount[i] > '9') {
-				return true;
-			}
-		}
-		return false;
+		return overflow(amount, 9);
 	}
 };
 
@@ -231,13 +235,9 @@ struct block {
 
 	int get_difficulty() {
 		int ret = 0;
-		for (int i = 0, flag = false; i < (int)hash.size() && !flag; ++i) {
-			for (int j = 7; j >= 0 && !flag; --j, ++ret) {
-				if (hash[i] & (1 << j)) {
-					flag = true;
-				}
-			}
-		}	
+		while (ret < (int)hash.size() && hash[ret] == 48) {
+			++ret;
+		}
 		return ret;
 	}
 };
@@ -371,10 +371,13 @@ int main(int argn, char *args[]) {
 								break;
 							}
 				case GET_BLOCK: {
-									unsigned h = byte_array_to_int(m.get_block_height());
-									if (h < chain.size()) {
-										message mb = chain[h].get_message();
-										reply(mb);
+									byte_array hs = m.get_block_height();
+									if (!overflow(hs, 9)) {	
+										unsigned h = byte_array_to_int(hs);
+										if (h < chain.size()) {
+											message mb = chain[h].get_message();
+											reply(mb);
+										}
 									}
 									break;
 								}
@@ -403,6 +406,10 @@ int main(int argn, char *args[]) {
 			chain.push_back(b);
 			message mb = b.get_message();
 			broadcast(mb);
+			if (verbose) {
+				printf("New block sent");
+				debug_bytes(mb.data);
+			}
 		}
 	}
 	return 0;
