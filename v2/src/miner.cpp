@@ -1,3 +1,4 @@
+#include <cassert>
 #include <ctime>
 #include <string>
 #include <cstring>
@@ -5,10 +6,11 @@
 
 #include "core.h"
 #include "util.h"
+
+#include "test.h"
  
 typedef unsigned char uint8;
 typedef unsigned int uint32;
-typedef unsigned long long uint64;
  
 const unsigned int SHA224_256_BLOCK_SIZE = 512 / 8;
 const unsigned int DIGEST_SIZE = 256 / 8;
@@ -19,25 +21,26 @@ unsigned char m_block[2*SHA224_256_BLOCK_SIZE];
 uint32 m_h[8];
 
 void compress(uint32 state[8], const uint8 block[64]) {
-	#define ROTR32(x, n)  (((0U + (x)) << (32 - (n))) | ((x) >> (n)))  // Assumes that x is uint32_t and 0 < n < 32
+	#define ROTR32(x, n)  (((x) << (32 - (n))) | ((x) >> (n)))  // Assumes that x is uint32_t and 0 < n < 32
 	
-	#define LOADSCHEDULE(i)  \
-		schedule[i] = (uint32)block[i * 4 + 0] << 24  \
-		            | (uint32)block[i * 4 + 1] << 16  \
-		            | (uint32)block[i * 4 + 2] <<  8  \
-		            | (uint32)block[i * 4 + 3] <<  0;
+	#define LOADSCHEDULE(wi, i)  \
+		wi = (uint32)block[i * 4 + 0] << 24  \
+		   | (uint32)block[i * 4 + 1] << 16  \
+		   | (uint32)block[i * 4 + 2] <<  8  \
+		   | (uint32)block[i * 4 + 3];
 	
-	#define SCHEDULE(i)  \
-		schedule[i] = 0U + schedule[i - 16] + schedule[i - 7]  \
-			+ (ROTR32(schedule[i - 15], 7) ^ ROTR32(schedule[i - 15], 18) ^ (schedule[i - 15] >> 3))  \
-			+ (ROTR32(schedule[i - 2], 17) ^ ROTR32(schedule[i - 2], 19) ^ (schedule[i - 2] >> 10));
+	#define SCHEDULE(wi, wi7, wi15, wi2)  \
+		wi += wi7  \
+			+ (ROTR32(wi15, 7) ^ ROTR32(wi15, 18) ^ (wi15 >> 3))  \
+			+ (ROTR32(wi2, 17) ^ ROTR32(wi2, 19) ^ (wi2 >> 10));
 	
-	#define ROUND(a, b, c, d, e, f, g, h, i, k) \
-		h = 0U + h + (ROTR32(e, 6) ^ ROTR32(e, 11) ^ ROTR32(e, 25)) + (g ^ (e & (f ^ g))) + UINT32_C(k) + schedule[i];  \
-		d = 0U + d + h;  \
-		h = 0U + h + (ROTR32(a, 2) ^ ROTR32(a, 13) ^ ROTR32(a, 22)) + ((a & (b | c)) | (b & c));
+	#define ROUND(a, b, c, d, e, f, g, h, wi, k) \
+		h += (ROTR32(e, 6) ^ ROTR32(e, 11) ^ ROTR32(e, 25)) + (g ^ (e & (f ^ g))) + wi;  \
+		d += h;  \
+		h += (ROTR32(a, 2) ^ ROTR32(a, 13) ^ ROTR32(a, 22)) + ((a & (b | c)) | (b & c));
 	
-	static uint32 schedule[64];
+	uint32 w0, w1, w2 , w3 , w4 , w5 , w6 , w7,
+		   w8, w9, w10, w11, w12, w13, w14, w15;
 	uint32 a = state[0];
 	uint32 b = state[1];
 	uint32 c = state[2];
@@ -47,143 +50,143 @@ void compress(uint32 state[8], const uint8 block[64]) {
 	uint32 g = state[6];
 	uint32 h = state[7];
 
-	LOADSCHEDULE( 0)
-	ROUND(a, b, c, d, e, f, g, h,  0, 0x428A2F98)
-	LOADSCHEDULE( 1)
-	ROUND(h, a, b, c, d, e, f, g,  1, 0x71374491)
-	LOADSCHEDULE( 2)
-	ROUND(g, h, a, b, c, d, e, f,  2, 0xB5C0FBCF)
-	LOADSCHEDULE( 3)
-	ROUND(f, g, h, a, b, c, d, e,  3, 0xE9B5DBA5)
-	LOADSCHEDULE( 4)
-	ROUND(e, f, g, h, a, b, c, d,  4, 0x3956C25B)
-	LOADSCHEDULE( 5)
-	ROUND(d, e, f, g, h, a, b, c,  5, 0x59F111F1)
-	LOADSCHEDULE( 6)
-	ROUND(c, d, e, f, g, h, a, b,  6, 0x923F82A4)
-	LOADSCHEDULE( 7)
-	ROUND(b, c, d, e, f, g, h, a,  7, 0xAB1C5ED5)
-	LOADSCHEDULE( 8)
-	ROUND(a, b, c, d, e, f, g, h,  8, 0xD807AA98)
-	LOADSCHEDULE( 9)
-	ROUND(h, a, b, c, d, e, f, g,  9, 0x12835B01)
-	LOADSCHEDULE(10)
-	ROUND(g, h, a, b, c, d, e, f, 10, 0x243185BE)
-	LOADSCHEDULE(11)
-	ROUND(f, g, h, a, b, c, d, e, 11, 0x550C7DC3)
-	LOADSCHEDULE(12)
-	ROUND(e, f, g, h, a, b, c, d, 12, 0x72BE5D74)
-	LOADSCHEDULE(13)
-	ROUND(d, e, f, g, h, a, b, c, 13, 0x80DEB1FE)
-	LOADSCHEDULE(14)
-	ROUND(c, d, e, f, g, h, a, b, 14, 0x9BDC06A7)
-	LOADSCHEDULE(15)
-	ROUND(b, c, d, e, f, g, h, a, 15, 0xC19BF174)
-	SCHEDULE(16)
-	ROUND(a, b, c, d, e, f, g, h, 16, 0xE49B69C1)
-	SCHEDULE(17)
-	ROUND(h, a, b, c, d, e, f, g, 17, 0xEFBE4786)
-	SCHEDULE(18)
-	ROUND(g, h, a, b, c, d, e, f, 18, 0x0FC19DC6)
-	SCHEDULE(19)
-	ROUND(f, g, h, a, b, c, d, e, 19, 0x240CA1CC)
-	SCHEDULE(20)
-	ROUND(e, f, g, h, a, b, c, d, 20, 0x2DE92C6F)
-	SCHEDULE(21)
-	ROUND(d, e, f, g, h, a, b, c, 21, 0x4A7484AA)
-	SCHEDULE(22)
-	ROUND(c, d, e, f, g, h, a, b, 22, 0x5CB0A9DC)
-	SCHEDULE(23)
-	ROUND(b, c, d, e, f, g, h, a, 23, 0x76F988DA)
-	SCHEDULE(24)
-	ROUND(a, b, c, d, e, f, g, h, 24, 0x983E5152)
-	SCHEDULE(25)
-	ROUND(h, a, b, c, d, e, f, g, 25, 0xA831C66D)
-	SCHEDULE(26)
-	ROUND(g, h, a, b, c, d, e, f, 26, 0xB00327C8)
-	SCHEDULE(27)
-	ROUND(f, g, h, a, b, c, d, e, 27, 0xBF597FC7)
-	SCHEDULE(28)
-	ROUND(e, f, g, h, a, b, c, d, 28, 0xC6E00BF3)
-	SCHEDULE(29)
-	ROUND(d, e, f, g, h, a, b, c, 29, 0xD5A79147)
-	SCHEDULE(30)
-	ROUND(c, d, e, f, g, h, a, b, 30, 0x06CA6351)
-	SCHEDULE(31)
-	ROUND(b, c, d, e, f, g, h, a, 31, 0x14292967)
-	SCHEDULE(32)
-	ROUND(a, b, c, d, e, f, g, h, 32, 0x27B70A85)
-	SCHEDULE(33)
-	ROUND(h, a, b, c, d, e, f, g, 33, 0x2E1B2138)
-	SCHEDULE(34)
-	ROUND(g, h, a, b, c, d, e, f, 34, 0x4D2C6DFC)
-	SCHEDULE(35)
-	ROUND(f, g, h, a, b, c, d, e, 35, 0x53380D13)
-	SCHEDULE(36)
-	ROUND(e, f, g, h, a, b, c, d, 36, 0x650A7354)
-	SCHEDULE(37)
-	ROUND(d, e, f, g, h, a, b, c, 37, 0x766A0ABB)
-	SCHEDULE(38)
-	ROUND(c, d, e, f, g, h, a, b, 38, 0x81C2C92E)
-	SCHEDULE(39)
-	ROUND(b, c, d, e, f, g, h, a, 39, 0x92722C85)
-	SCHEDULE(40)
-	ROUND(a, b, c, d, e, f, g, h, 40, 0xA2BFE8A1)
-	SCHEDULE(41)
-	ROUND(h, a, b, c, d, e, f, g, 41, 0xA81A664B)
-	SCHEDULE(42)
-	ROUND(g, h, a, b, c, d, e, f, 42, 0xC24B8B70)
-	SCHEDULE(43)
-	ROUND(f, g, h, a, b, c, d, e, 43, 0xC76C51A3)
-	SCHEDULE(44)
-	ROUND(e, f, g, h, a, b, c, d, 44, 0xD192E819)
-	SCHEDULE(45)
-	ROUND(d, e, f, g, h, a, b, c, 45, 0xD6990624)
-	SCHEDULE(46)
-	ROUND(c, d, e, f, g, h, a, b, 46, 0xF40E3585)
-	SCHEDULE(47)
-	ROUND(b, c, d, e, f, g, h, a, 47, 0x106AA070)
-	SCHEDULE(48)
-	ROUND(a, b, c, d, e, f, g, h, 48, 0x19A4C116)
-	SCHEDULE(49)
-	ROUND(h, a, b, c, d, e, f, g, 49, 0x1E376C08)
-	SCHEDULE(50)
-	ROUND(g, h, a, b, c, d, e, f, 50, 0x2748774C)
-	SCHEDULE(51)
-	ROUND(f, g, h, a, b, c, d, e, 51, 0x34B0BCB5)
-	SCHEDULE(52)
-	ROUND(e, f, g, h, a, b, c, d, 52, 0x391C0CB3)
-	SCHEDULE(53)
-	ROUND(d, e, f, g, h, a, b, c, 53, 0x4ED8AA4A)
-	SCHEDULE(54)
-	ROUND(c, d, e, f, g, h, a, b, 54, 0x5B9CCA4F)
-	SCHEDULE(55)
-	ROUND(b, c, d, e, f, g, h, a, 55, 0x682E6FF3)
-	SCHEDULE(56)
-	ROUND(a, b, c, d, e, f, g, h, 56, 0x748F82EE)
-	SCHEDULE(57)
-	ROUND(h, a, b, c, d, e, f, g, 57, 0x78A5636F)
-	SCHEDULE(58)
-	ROUND(g, h, a, b, c, d, e, f, 58, 0x84C87814)
-	SCHEDULE(59)
-	ROUND(f, g, h, a, b, c, d, e, 59, 0x8CC70208)
-	SCHEDULE(60)
-	ROUND(e, f, g, h, a, b, c, d, 60, 0x90BEFFFA)
-	SCHEDULE(61)
-	ROUND(d, e, f, g, h, a, b, c, 61, 0xA4506CEB)
-	SCHEDULE(62)
-	ROUND(c, d, e, f, g, h, a, b, 62, 0xBEF9A3F7)
-	SCHEDULE(63)
-	ROUND(b, c, d, e, f, g, h, a, 63, 0xC67178F2)
+    LOADSCHEDULE(w0,0);
+    ROUND(a,b,c,d,e,f,g,h,w0,0x428a2f98);
+    LOADSCHEDULE(w1,1);
+    ROUND(h,a,b,c,d,e,f,g,w1,0x71374491);
+    LOADSCHEDULE(w2,2);
+    ROUND(g,h,a,b,c,d,e,f,w2,0xb5c0fbcf);
+    LOADSCHEDULE(w3,3);
+    ROUND(f,g,h,a,b,c,d,e,w3,0xe9b5dba5);
+    LOADSCHEDULE(w4,4);
+    ROUND(e,f,g,h,a,b,c,d,w4,0x3956c25b);
+    LOADSCHEDULE(w5,5);
+    ROUND(d,e,f,g,h,a,b,c,w5,0x59f111f1);
+    LOADSCHEDULE(w6,6);
+    ROUND(c,d,e,f,g,h,a,b,w6,0x923f82a4);
+    LOADSCHEDULE(w7,7);
+    ROUND(b,c,d,e,f,g,h,a,w7,0xab1c5ed5);
+    LOADSCHEDULE(w8,8);
+    ROUND(a,b,c,d,e,f,g,h,w8,0xd807aa98);
+    LOADSCHEDULE(w9,9);
+    ROUND(h,a,b,c,d,e,f,g,w9,0x12835b01);
+    LOADSCHEDULE(w10,10);
+    ROUND(g,h,a,b,c,d,e,f,w10,0x243185be);
+    LOADSCHEDULE(w11,11);
+    ROUND(f,g,h,a,b,c,d,e,w11,0x550c7dc3);
+    LOADSCHEDULE(w12,12);
+    ROUND(e,f,g,h,a,b,c,d,w12,0x72be5d74);
+    LOADSCHEDULE(w13,13);
+    ROUND(d,e,f,g,h,a,b,c,w13,0x80deb1fe);
+    LOADSCHEDULE(w14,14);
+    ROUND(c,d,e,f,g,h,a,b,w14,0x9bdc06a7);
+    LOADSCHEDULE(w15,15);
+    ROUND(b,c,d,e,f,g,h,a,w15,0xc19bf174);
+    SCHEDULE(w0,w9,w1,w14);
+    ROUND(a,b,c,d,e,f,g,h,w0,0xe49b69c1);
+    SCHEDULE(w1,w10,w2,w15);
+    ROUND(h,a,b,c,d,e,f,g,w1,0xefbe4786);
+    SCHEDULE(w2,w11,w3,w0);
+    ROUND(g,h,a,b,c,d,e,f,w2,0xfc19dc6);
+    SCHEDULE(w3,w12,w4,w1);
+    ROUND(f,g,h,a,b,c,d,e,w3,0x240ca1cc);
+    SCHEDULE(w4,w13,w5,w2);
+    ROUND(e,f,g,h,a,b,c,d,w4,0x2de92c6f);
+    SCHEDULE(w5,w14,w6,w3);
+    ROUND(d,e,f,g,h,a,b,c,w5,0x4a7484aa);
+    SCHEDULE(w6,w15,w7,w4);
+    ROUND(c,d,e,f,g,h,a,b,w6,0x5cb0a9dc);
+    SCHEDULE(w7,w0,w8,w5);
+    ROUND(b,c,d,e,f,g,h,a,w7,0x76f988da);
+    SCHEDULE(w8,w1,w9,w6);
+    ROUND(a,b,c,d,e,f,g,h,w8,0x983e5152);
+    SCHEDULE(w9,w2,w10,w7);
+    ROUND(h,a,b,c,d,e,f,g,w9,0xa831c66d);
+    SCHEDULE(w10,w3,w11,w8);
+    ROUND(g,h,a,b,c,d,e,f,w10,0xb00327c8);
+    SCHEDULE(w11,w4,w12,w9);
+    ROUND(f,g,h,a,b,c,d,e,w11,0xbf597fc7);
+    SCHEDULE(w12,w5,w13,w10);
+    ROUND(e,f,g,h,a,b,c,d,w12,0xc6e00bf3);
+    SCHEDULE(w13,w6,w14,w11);
+    ROUND(d,e,f,g,h,a,b,c,w13,0xd5a79147);
+    SCHEDULE(w14,w7,w15,w12);
+    ROUND(c,d,e,f,g,h,a,b,w14,0x6ca6351);
+    SCHEDULE(w15,w8,w0,w13);
+    ROUND(b,c,d,e,f,g,h,a,w15,0x14292967);
+    SCHEDULE(w0,w9,w1,w14);
+    ROUND(a,b,c,d,e,f,g,h,w0,0x27b70a85);
+    SCHEDULE(w1,w10,w2,w15);
+    ROUND(h,a,b,c,d,e,f,g,w1,0x2e1b2138);
+    SCHEDULE(w2,w11,w3,w0);
+    ROUND(g,h,a,b,c,d,e,f,w2,0x4d2c6dfc);
+    SCHEDULE(w3,w12,w4,w1);
+    ROUND(f,g,h,a,b,c,d,e,w3,0x53380d13);
+    SCHEDULE(w4,w13,w5,w2);
+    ROUND(e,f,g,h,a,b,c,d,w4,0x650a7354);
+    SCHEDULE(w5,w14,w6,w3);
+    ROUND(d,e,f,g,h,a,b,c,w5,0x766a0abb);
+    SCHEDULE(w6,w15,w7,w4);
+    ROUND(c,d,e,f,g,h,a,b,w6,0x81c2c92e);
+    SCHEDULE(w7,w0,w8,w5);
+    ROUND(b,c,d,e,f,g,h,a,w7,0x92722c85);
+    SCHEDULE(w8,w1,w9,w6);
+    ROUND(a,b,c,d,e,f,g,h,w8,0xa2bfe8a1);
+    SCHEDULE(w9,w2,w10,w7);
+    ROUND(h,a,b,c,d,e,f,g,w9,0xa81a664b);
+    SCHEDULE(w10,w3,w11,w8);
+    ROUND(g,h,a,b,c,d,e,f,w10,0xc24b8b70);
+    SCHEDULE(w11,w4,w12,w9);
+    ROUND(f,g,h,a,b,c,d,e,w11,0xc76c51a3);
+    SCHEDULE(w12,w5,w13,w10);
+    ROUND(e,f,g,h,a,b,c,d,w12,0xd192e819);
+    SCHEDULE(w13,w6,w14,w11);
+    ROUND(d,e,f,g,h,a,b,c,w13,0xd6990624);
+    SCHEDULE(w14,w7,w15,w12);
+    ROUND(c,d,e,f,g,h,a,b,w14,0xf40e3585);
+    SCHEDULE(w15,w8,w0,w13);
+    ROUND(b,c,d,e,f,g,h,a,w15,0x106aa070);
+    SCHEDULE(w0,w9,w1,w14);
+    ROUND(a,b,c,d,e,f,g,h,w0,0x19a4c116);
+    SCHEDULE(w1,w10,w2,w15);
+    ROUND(h,a,b,c,d,e,f,g,w1,0x1e376c08);
+    SCHEDULE(w2,w11,w3,w0);
+    ROUND(g,h,a,b,c,d,e,f,w2,0x2748774c);
+    SCHEDULE(w3,w12,w4,w1);
+    ROUND(f,g,h,a,b,c,d,e,w3,0x34b0bcb5);
+    SCHEDULE(w4,w13,w5,w2);
+    ROUND(e,f,g,h,a,b,c,d,w4,0x391c0cb3);
+    SCHEDULE(w5,w14,w6,w3);
+    ROUND(d,e,f,g,h,a,b,c,w5,0x4ed8aa4a);
+    SCHEDULE(w6,w15,w7,w4);
+    ROUND(c,d,e,f,g,h,a,b,w6,0x5b9cca4f);
+    SCHEDULE(w7,w0,w8,w5);
+    ROUND(b,c,d,e,f,g,h,a,w7,0x682e6ff3);
+    SCHEDULE(w8,w1,w9,w6);
+    ROUND(a,b,c,d,e,f,g,h,w8,0x748f82ee);
+    SCHEDULE(w9,w2,w10,w7);
+    ROUND(h,a,b,c,d,e,f,g,w9,0x78a5636f);
+    SCHEDULE(w10,w3,w11,w8);
+    ROUND(g,h,a,b,c,d,e,f,w10,0x84c87814);
+    SCHEDULE(w11,w4,w12,w9);
+    ROUND(f,g,h,a,b,c,d,e,w11,0x8cc70208);
+    SCHEDULE(w12,w5,w13,w10);
+    ROUND(e,f,g,h,a,b,c,d,w12,0x90befffa);
+    SCHEDULE(w13,w6,w14,w11);
+    ROUND(d,e,f,g,h,a,b,c,w13,0xa4506ceb);
+    SCHEDULE(w14,w7,w15,w12);
+    ROUND(c,d,e,f,g,h,a,b,w14,0xbef9a3f7);
+    SCHEDULE(w15,w8,w0,w13);
+    ROUND(b,c,d,e,f,g,h,a,w15,0xc67178f2);
 	
-	state[0] = 0U + state[0] + a;
-	state[1] = 0U + state[1] + b;
-	state[2] = 0U + state[2] + c;
-	state[3] = 0U + state[3] + d;
-	state[4] = 0U + state[4] + e;
-	state[5] = 0U + state[5] + f;
-	state[6] = 0U + state[6] + g;
-	state[7] = 0U + state[7] + h;
+	state[0] += a;
+	state[1] += b;
+	state[2] += c;
+	state[3] += d;
+	state[4] += e;
+	state[5] += f;
+	state[6] += g;
+	state[7] += h;
 }
 
 void transform(const unsigned char *message, unsigned int block_nb)
@@ -191,6 +194,14 @@ void transform(const unsigned char *message, unsigned int block_nb)
 	for (int i = 0; i < block_nb; ++i) {
 		compress(m_h, message + (i << 6));
 	}
+}
+
+#define SHA2_UNPACK32(x, str)                 \
+{                                             \
+    *((str) + 3) = (uint8) ((x)      );       \
+    *((str) + 2) = (uint8) ((x) >>  8);       \
+    *((str) + 1) = (uint8) ((x) >> 16);       \
+    *((str) + 0) = (uint8) ((x) >> 24);       \
 }
  
 void init()
@@ -229,14 +240,6 @@ void update(const unsigned char *message, unsigned int len)
     m_len = rem_len;
     m_tot_len += (block_nb + 1) << 6;
 }
- 
-#define SHA2_UNPACK32(x, str)                 \
-{                                             \
-    *((str) + 3) = (uint8) ((x)      );       \
-    *((str) + 2) = (uint8) ((x) >>  8);       \
-    *((str) + 1) = (uint8) ((x) >> 16);       \
-    *((str) + 0) = (uint8) ((x) >> 24);       \
-}
 
 void end(unsigned char *digest)
 {
@@ -266,10 +269,10 @@ void sha256(unsigned char *digest, const char *input, const int length)
 }
 
 void mine(byte_array &rawb) {
+	unsigned char buf[32];
 	clock_t start = clock();
 	int nonce = 0;
 	const char *begin = rawb.data();
-	unsigned char buf[32];
 	bool flag = true;
 	while (flag) {
 		
