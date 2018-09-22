@@ -20,7 +20,7 @@ unsigned int m_len;
 unsigned char m_block[2*SHA224_256_BLOCK_SIZE];
 uint32 m_h[8];
 
-void compress(uint32 state[8], const uint8 block[64]) {
+inline void compress(uint32 state[8], const uint8 block[64]) {
 	#define ROTR32(x, n)  (((x) << (32 - (n))) | ((x) >> (n)))  // Assumes that x is uint32_t and 0 < n < 32
 	
 	#define LOADSCHEDULE(wi, i)  \
