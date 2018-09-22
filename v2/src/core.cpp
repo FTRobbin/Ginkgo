@@ -10,6 +10,7 @@
 #include "addr.h"
 #include "util.h"
 #include "miner.h"
+#include "rewind_miner.h"
 #include "network.h"
 
 #include "test.h"
@@ -130,7 +131,11 @@ void message_loop() {
 			for (int i = 0; q.size(); q.pop(), ++i) {
 				inplace_replace(nb, 160 + 128 * i, 128, q.front());
 			}
-			mine(nb);
+			if (use_rewind) {
+				rewind_miner::rewind_mine(nb);
+			} else {
+				mine(nb);
+			}
 			rotate(nb.begin(), nb.begin() + 32, nb.begin() + 96);
 			chain.push_back(nb);
 			if (verbose) {

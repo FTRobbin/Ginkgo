@@ -10,6 +10,8 @@ extern int self_port, numtxinblock, difficulty, numcores;
  
 extern std::vector<int> peer_ports;
 
+extern bool use_rewind;
+
 typedef std::string byte_array;
 
 typedef byte_array SHA256H;

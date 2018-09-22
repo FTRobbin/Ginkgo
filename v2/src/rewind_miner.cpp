@@ -1,15 +1,26 @@
 #include <cassert>
 #include <ctime>
 #include <string>
+#include <vector>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
 
 #include "core.h"
 #include "util.h"
 
 #include "test.h"
 
-#include "miner.h"
+#include "rewind_miner.h"
+
+using namespace std;
+
+namespace rewind_miner {
+
+int rewind_len = 8;
+int rewind_cnt;
+
+vector<int> ord;
  
 typedef unsigned char uint8;
 typedef unsigned int uint32;
@@ -198,6 +209,15 @@ void transform(const unsigned char *message, unsigned int block_nb)
 	}
 }
 
+void transform_ord(const unsigned char *message)
+{
+	for (int u = 0; u < rewind_len; ++u) {
+		int i = ord[u] * 2;
+		compress(m_h, message + (i << 6));
+		compress(m_h, message + ((i | 1) << 6));
+	}
+}
+
 #define SHA2_UNPACK32(x, str)                 \
 {                                             \
     *((str) + 3) = (uint8) ((x)      );       \
@@ -220,11 +240,12 @@ void init()
     m_tot_len = 0;
 }
  
-void update(const unsigned char *message, unsigned int len)
+unsigned int block_nb;
+unsigned int new_len, rem_len, tmp_len;
+const unsigned char *shifted_message;
+
+void update_halt(const unsigned char *message, unsigned int len)
 {
-    unsigned int block_nb;
-    unsigned int new_len, rem_len, tmp_len;
-    const unsigned char *shifted_message;
     tmp_len = SHA224_256_BLOCK_SIZE - m_len;
     rem_len = len < tmp_len ? len : tmp_len;
     memcpy(&m_block[m_len], message, rem_len);
@@ -236,7 +257,38 @@ void update(const unsigned char *message, unsigned int len)
     block_nb = new_len / SHA224_256_BLOCK_SIZE;
     shifted_message = message + rem_len;
     transform(m_block, 1);
-    transform(shifted_message, block_nb);
+    transform(shifted_message, block_nb - rewind_len * 2);
+}
+
+
+unsigned int bak_m_tot_len;
+unsigned int bak_m_len;
+unsigned char bak_m_block[2*SHA224_256_BLOCK_SIZE];
+uint32 bak_m_h[8];
+
+unsigned int bak_rem_len;
+
+void record_state() {
+	bak_m_tot_len = m_tot_len;
+	bak_m_len = m_len;
+	memcpy(bak_m_block, m_block, sizeof(m_block));
+	memcpy(bak_m_h, m_h, sizeof(m_h));
+
+	bak_rem_len = rem_len;
+}
+
+void rewind_state() {
+	m_tot_len = bak_m_tot_len;
+	m_len = bak_m_len;
+	memcpy(m_block, bak_m_block, sizeof(m_block));
+	memcpy(m_h, bak_m_h, sizeof(m_h));
+
+	rem_len = bak_rem_len;
+}
+
+void update_cont()
+{
+    transform_ord(shifted_message + ((block_nb - rewind_len * 2) << 6));
     rem_len = new_len % SHA224_256_BLOCK_SIZE;
     memcpy(m_block, &shifted_message[block_nb << 6], rem_len);
     m_len = rem_len;
@@ -264,21 +316,47 @@ void end(unsigned char *digest)
  
 void sha256(unsigned char *digest, const char *input, const int length)
 {
-    memset(digest, 0, DIGEST_SIZE);
+	rewind_cnt = 1;
     init();
-    update((unsigned char*)input, length);
-    end(digest);
+    update_halt((unsigned char*)input, length);
+	record_state();
+	ord.resize(rewind_len);
+	for (int i = 0; i < rewind_len; ++i) {
+		ord[i] = i;
+	}
+	bool flag = true;
+	while (flag) {
+		update_cont();
+		end(digest);
+		flag = false;
+		for (int i = 0; i < difficulty; ++i) {
+			if (digest[i] != '0') {
+				flag = true;
+			}
+		}
+		if (flag) {
+			if (!next_permutation(ord.begin(), ord.end())) {
+				break;
+			} else {
+				rewind_state();
+				++rewind_cnt;
+			}
+		}
+	}
 }
 
-void mine(byte_array &rawb) {
+void rewind_mine(byte_array &rawb) {
 	unsigned char buf[32];
 	clock_t start = clock();
 	int nonce = 0;
+	int total_rewind = 0;
 	const char *begin = rawb.data();
 	bool flag = true;
 	while (flag) {
 		
 		sha256(buf, begin + 32, rawb.size() - 32);
+
+		total_rewind += rewind_cnt;
 
 		flag = false;
 		for (int i = 0; i < difficulty; ++i) {
@@ -292,8 +370,29 @@ void mine(byte_array &rawb) {
 		}
 	}
 	inplace_replace(rawb, 0, 32, std::string((char *)buf, 32));
+	static char tmp1[128], tmp2[128];
+	for (int i = 0; i < rewind_len; ++i) {
+		if (i != ord[i]) {	
+			
+			memcpy(tmp1, rawb.data() + (rawb.size() - (rewind_len - i) * 128), sizeof(tmp1));
+			memcpy(tmp2, rawb.data() + (rawb.size() - (rewind_len - ord[i]) * 128), sizeof(tmp2));
+			inplace_replace(rawb, (rawb.size() - (rewind_len - i) * 128), 128, string(tmp2, 128));
+
+			inplace_replace(rawb, (rawb.size() - (rewind_len - ord[i]) * 128), 128, string(tmp1, 128));
+
+			for (int j = 0; j < rewind_len; ++j) {
+				if (ord[j] == i) {
+					ord[j] = ord[i];
+					ord[i] = i;
+					break;
+				}
+			}
+		}
+	}
 	if (verbose) {
 		double sec = (double)(clock() - start) / CLOCKS_PER_SEC;
-		printf("%d hashes %.6f seconds %.6f hashes/sec\n", nonce + 1, sec, (nonce + 1) / sec);
+		printf("%d hashes %d rewinds %.6f seconds %.6f rewinds/sec\n", nonce + 1, total_rewind, sec, total_rewind / sec);
 	}
+}
+
 }

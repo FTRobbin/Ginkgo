@@ -17,6 +17,8 @@ int numtxinblock = 50000;
 int difficulty = 0;
 int numcores = 1;
 
+bool use_rewind = true;
+
 std::vector<int> peer_ports;
 
 void process_args(int argn, char *args[]) {
@@ -42,6 +44,9 @@ void process_args(int argn, char *args[]) {
 		} else if (strcmp(s, "--numtxinblock") == 0) {
 			++i;
 			sscanf(args[i], "%d", &numtxinblock);
+			if (numtxinblock <= 10) {
+				use_rewind = false;
+			}
 		} else if (strcmp(s, "--difficulty") == 0) {
 			++i;
 			sscanf(args[i], "%d", &difficulty);
@@ -50,6 +55,8 @@ void process_args(int argn, char *args[]) {
 			sscanf(args[i], "%d", &numcores);
 		} else if (strcmp(s, "--verbose") == 0) {
 			verbose = true;
+		} else if (strcmp(s, "--no-rewind") == 0) {
+			use_rewind = false;
 		} else {
 			fprintf(stderr, "Unexpected argument: %s\n", args[i]);
 			throw runtime_error("");
