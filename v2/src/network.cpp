@@ -52,6 +52,13 @@ int self_sock;
 
 void init_self() {
 	self_sock = get_sockfd();
+	/*
+	int enable = 1;
+	if (setsockopt(self_sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+		perror("Failed to setsockopt(SO_REUSEADDR)");
+		throw runtime_error("");
+	}
+	*/
 	sockaddr_in addr = get_sockaddr(self_port);
 	if (bind(self_sock, (sockaddr *) &addr, sizeof(sockaddr_in)) == -1) {
 		perror("Failed to bind on self port");
@@ -75,14 +82,14 @@ void init_peers() {
 	}
 }
 
+int buf_size = 0;
 char *buf;
 
 void init_buffers() {
-	int max_size = 0;
 	for (char ch = TRANSACTION; ch <= GET_BLOCK; ++ch) {
-		max_size = max(max_size, get_type_size(get_type(ch)));
+		buf_size = max(buf_size, get_type_size(get_type(ch)));
 	}
-	buf = new char[max_size + 1];
+	buf = new char[buf_size + 1];
 }
 
 void init_network() {
@@ -135,7 +142,7 @@ message get_message() {
 		ret = recv(curr_sock, buf, msg_size, MSG_WAITALL);
 		if (ret == -1) {
 			perror("Failed to recv from listened port");
-			delete buf;
+			close_curr_sock(curr_sock);
 			continue;
 		}
 		if (ret != msg_size) {
@@ -173,6 +180,11 @@ void close_network() {
 				perror("Failed to close the peer socket");
 			}
 		}
+	}
+	while (curr_sock != -1 && recv(curr_sock, buf, buf_size, 0) > 0);
+	if (curr_sock != -1 && close(curr_sock) == -1) {
+		perror("Failed to close the curret socket");
+		throw runtime_error("");
 	}
 	if (close(self_sock) == -1) {
 		perror("Failed to close the listening socket");
